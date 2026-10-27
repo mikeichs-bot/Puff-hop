@@ -1,0 +1,104 @@
+name: Build Puff Hop
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.7.2
+    env:
+      GODOT_VERSION: "4.7.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack the project zip
+        run: |
+          Z=$(ls -t *.zip 2>/dev/null | head -n 1 || true)
+          if [ -n "$Z" ]; then echo "Unzipping $Z"; unzip -q -o "$Z" -d unpacked; fi
+
+      - name: Find the Godot project
+        run: |
+          P=$(find . -name project.godot -not -path "*/addons/*" | head -n 1)
+          echo "Found: $P"
+          if [ -z "$P" ]; then echo "ERROR: no project.godot found. Upload the project zip to the repo."; exit 1; fi
+          echo "PROJECT_DIR=$(dirname "$P")" >> "$GITHUB_ENV"
+
+      - name: Set up Godot
+        run: |
+          mkdir -p ~/.local/share/godot/export_templates ~/.config/godot
+          cp -r /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/
+          cp -r /root/.config/godot/. ~/.config/godot/ || true
+
+      - name: Write export settings (if missing)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -f export_presets.cfg ]; then
+          cat > export_presets.cfg <<'CFG'
+          [preset.0]
+
+          name="Android"
+          platform="Android"
+          runnable=true
+          advanced_options=true
+          dedicated_server=false
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path=""
+
+          [preset.0.options]
+
+          gradle_build/use_gradle_build=true
+          gradle_build/export_format=0
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          version/code=1
+          version/name="1.0"
+          package/unique_name="com.mikeichs.puffhop"
+          package/name="Puff Hop"
+          package/signed=true
+          screen/immersive_mode=true
+          permissions/internet=true
+          permissions/access_network_state=true
+          CFG
+          fi
+
+      - name: Install Android build template
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          mkdir -p android/build
+          unzip -q -o ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/android_source.zip -d android/build
+          echo "${GODOT_VERSION}.stable" > android/.build_version
+          touch android/build/.gdignore
+
+      - name: Import project (also lets the AdMob plugin fetch its files)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          godot --headless --verbose --editor --quit || true
+          ls addons/admob/android/bin || echo "WARNING: AdMob Android files were not downloaded"
+
+      - name: Make a debug signing key
+        run: |
+          keytool -genkeypair -keystore /tmp/debug.keystore -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Export debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /tmp/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          godot --headless --verbose --export-debug "Android" "$GITHUB_WORKSPACE/build/puff-hop-debug.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puff-hop-debug-apk
+          path: build/puff-hop-debug.apk
