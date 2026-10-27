@@ -75,6 +75,15 @@ jobs:
           echo "${GODOT_VERSION}.stable" > android/.build_version
           touch android/build/.gdignore
 
+      - name: Enable mobile texture compression
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if grep -q '^\[rendering\]' project.godot; then
+            sed -i '/^\[rendering\]/a textures/vram_compression/import_etc2_astc=true' project.godot
+          else
+            printf '\n[rendering]\n\ntextures/vram_compression/import_etc2_astc=true\n' >> project.godot
+          fi
+
       - name: Import project (also lets the AdMob plugin fetch its files)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
